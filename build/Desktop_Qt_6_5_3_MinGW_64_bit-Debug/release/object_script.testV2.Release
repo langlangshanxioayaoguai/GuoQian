@@ -1,0 +1,14 @@
+release/opcuaclientmanager.o
+release/open62541.o
+release/realtimevariablemanager.o
+release/variableconfigtool.o
+release/variabledatabase.o
+release/variablesystem.o
+release/main.o
+release/mainwindow.o
+release/moc_opcuaclientmanager.o
+release/moc_realtimevariablemanager.o
+release/moc_variableconfigtool.o
+release/moc_variabledatabase.o
+release/moc_variablesystem.o
+release/moc_mainwindow.o

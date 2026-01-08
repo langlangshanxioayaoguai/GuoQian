@@ -1,0 +1,14 @@
+debug/opcuaclientmanager.o
+debug/open62541.o
+debug/realtimevariablemanager.o
+debug/variableconfigtool.o
+debug/variabledatabase.o
+debug/variablesystem.o
+debug/main.o
+debug/mainwindow.o
+debug/moc_opcuaclientmanager.o
+debug/moc_realtimevariablemanager.o
+debug/moc_variableconfigtool.o
+debug/moc_variabledatabase.o
+debug/moc_variablesystem.o
+debug/moc_mainwindow.o
