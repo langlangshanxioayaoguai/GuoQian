@@ -29,6 +29,7 @@ public:
     QDoubleSpinBox *doubleSpinBox_2;
     QDoubleSpinBox *doubleSpinBox_3;
     QDoubleSpinBox *doubleSpinBox_4;
+    QDoubleSpinBox *doubleSpinBox_5;
     QMenuBar *menubar;
     QStatusBar *statusbar;
 
@@ -65,6 +66,12 @@ public:
         doubleSpinBox_4->setMinimum(-10000.000000000000000);
         doubleSpinBox_4->setMaximum(10000.000000000000000);
         doubleSpinBox_4->setValue(0.000000000000000);
+        doubleSpinBox_5 = new QDoubleSpinBox(centralwidget);
+        doubleSpinBox_5->setObjectName("doubleSpinBox_5");
+        doubleSpinBox_5->setGeometry(QRect(510, 360, 141, 61));
+        doubleSpinBox_5->setMinimum(-10000.000000000000000);
+        doubleSpinBox_5->setMaximum(10000.000000000000000);
+        doubleSpinBox_5->setValue(0.000000000000000);
         MainWindow->setCentralWidget(centralwidget);
         menubar = new QMenuBar(MainWindow);
         menubar->setObjectName("menubar");

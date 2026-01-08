@@ -14,6 +14,7 @@
 #include <QMutex>
 #include <QtConcurrent/QtConcurrent>
 #include <QFuture>
+
 /* ------------------------------------open62541的回调机制-----------------------------------------
 您的 Qt 程序                          open62541 库                          OPC UA 服务器
     |                                      |                                      |
@@ -484,7 +485,8 @@ OPCUAConnectionManager::OPCUAConnectionManager(QObject *parent) : QObject(parent
         updateState(STATE_ERROR);
         return;
     }
-
+   // config->outstandingPublishRequests = 3;  // 从日志看最终稳定在 3
+    config->outStandingPublishRequests= 10;
     UA_ClientConfig_setDefault(config);// 设置默认配置
 
     config->timeout = 10000;  // 设置客户端等待服务器响应的最长时间
@@ -1009,24 +1011,13 @@ OPCUAVariableManager::OPCUAVariableManager(QObject *parent)
     , m_isInitialized(false)
 {
     // 初始化订阅配置
-    //服务器向客户端发送数据更新的最大间隔时间（单位：毫秒）
-   // m_subscriptionConfig.publishingInterval = 1000.0;// 发布间隔(ms)服务器向客户端发送不变化数据的间隔时间，变化数据，数据变化发送，不是每1s推送一次
-   // m_subscriptionConfig.lifetimeCount = 60;//客户端允许服务器最多连续错过多少次心跳/数据更新后，就认为订阅已失效
-   // m_subscriptionConfig.maxKeepAliveCount = 10;//服务器在没有数据变化时，最多可以"沉默"多少次，就必须强制发送一次心跳
-   // m_subscriptionConfig.priority = 0;//订阅优先级 参数，用于控制订阅在服务器资源分配中的相对重要性。0-255
-
-    // 初始化监控项配置
-   // m_monitoredItemConfig.samplingInterval = 1000.0;//服务器检查变量值变化的频率（单位：毫秒）
-   // m_monitoredItemConfig.queueSize = 10;//服务器为每个监控项（每个变量）维护的一个数据队列的大小。保存最多10个数据变化事件（变化的值）
-   // m_monitoredItemConfig.discardOldest = true;//队列已满时，丢弃最旧的数据变化，
-   // m_monitoredItemConfig.clientHandle = generateClientHandle();//客户端自己生成一个唯一的ID给每个监控的变量分配一个唯一的"身份证号"，用于识别哪个变量发送了数据
     m_subscriptionConfig.publishingInterval = 1000.0;// 发布间隔(ms)服务器向客户端发送不变化数据的间隔时间，变化数据，数据变化发送，不是每1s推送一次
     m_subscriptionConfig.lifetimeCount = 60;//客户端允许服务器最多连续错过多少次心跳/数据更新后，就认为订阅已失效
     m_subscriptionConfig.maxKeepAliveCount = 10;//服务器在没有数据变化时，最多可以"沉默"多少次，就必须强制发送一次心跳
     m_subscriptionConfig.priority = 0;//订阅优先级 参数，用于控制订阅在服务器资源分配中的相对重要性。0-255
 
     // 初始化监控项配置
-    m_monitoredItemConfig.samplingInterval = 1000.0;//服务器检查变量值变化的频率（单位：毫秒）
+    m_monitoredItemConfig.samplingInterval = 100.0;//服务器检查变量值变化的频率（单位：毫秒）
     m_monitoredItemConfig.queueSize = 1;//服务器为每个监控项（每个变量）维护的一个数据队列的大小。保存最多10个数据变化事件（变化的值）
     m_monitoredItemConfig.discardOldest = true;//队列已满时，丢弃最旧的数据变化，
     m_monitoredItemConfig.clientHandle = generateClientHandle();//客户端自己生成一个唯一的ID给每个监控的变量分配一个唯一的"身份证号"，用于识别哪个变量发送了数据
@@ -2515,6 +2506,178 @@ void OPCUAVariableManager::onInternalReconnect()//强制重连的内部回调函
 
 //------------------------open62541回调函数及处理-----------------------------------
 
+
+
+
+
+//========================工业现场优化版本折中板保证同一变量在同一线程= 固定线程数量============
+
+void OPCUAVariableManager::dataChangeNotificationCallback(
+    UA_Client* client, UA_UInt32 subId, void* subContext,
+    UA_UInt32 monId, void* monContext, UA_DataValue* value)
+{
+    // ========== 简单统计（放在最前面）==========
+    static std::atomic<int> totalCount{0};
+    static QElapsedTimer statTimer;
+
+    // 线程安全的计数
+    int currentCount = totalCount.fetch_add(1, std::memory_order_relaxed);
+    if (currentCount == 0) {
+        statTimer.start();
+    }
+
+    if (statTimer.elapsed() >= 5000) {
+        int count = totalCount.exchange(0);  // 获取并清零
+
+        qDebug() << "=== OPC UA 回调统计 ===";
+        qDebug() << "5秒内回调次数:" << count;
+        qDebug() << "平均频率:" << (count / 5.0) << "Hz";
+
+        statTimer.restart();
+    }
+
+    // 1. 快速参数检查（工业现场要求快速响应）
+    if (!value || value->status != UA_STATUSCODE_GOOD) {
+        return;  // 静默失败
+    }
+
+    OPCUAVariableManager* manager = static_cast<OPCUAVariableManager*>(subContext);
+    OPCUAVariableHandle* handle = static_cast<OPCUAVariableHandle*>(monContext);
+    if (!manager || !handle) return;
+
+    // 2. 数据拷贝（必须深拷贝）
+    UA_DataValue* valueCopy = UA_DataValue_new();
+    UA_DataValue_init(valueCopy);
+    UA_DataValue_copy(value, valueCopy);
+
+    // 3. 优化线程池配置（结合两者优点）
+    static QVector<QThreadPool*> threadPools;
+    static std::once_flag poolInitFlag;
+
+    std::call_once(poolInitFlag, []() {
+        // 工业现场推荐配置
+        int coreCount = QThread::idealThreadCount();
+        int poolCount = qMax(2, coreCount - 2);  // 保留2个核心给系统
+
+        threadPools.resize(poolCount);
+        for (int i = 0; i < poolCount; i++) {
+            QThreadPool* pool = new QThreadPool();
+            pool->setMaxThreadCount(1);  // 关键：每个池只有1个线程
+            pool->setExpiryTimeout(30000);
+            pool->setStackSize(128 * 1024);  // 工业级栈大小
+            threadPools[i] = pool;
+        }
+
+        qDebug() << "创建" << poolCount << "个专用线程池，每个池1个线程";
+    });
+
+    // 4. 按变量分组处理（保证同一变量顺序）
+    QString tagName = QString(handle->tagName);
+    uint poolIndex = qHash(tagName) % threadPools.size();
+
+    // 5. 提交到专用线程池
+    QtConcurrent::run(threadPools[poolIndex],
+                      [manager, handle, valueCopy, tagName]() {
+                          // 关键：异常安全的数据处理
+                          try {
+                              if (manager && handle && valueCopy) {
+                                  manager->updateVariableFromCallback(handle, valueCopy);
+                              }
+                          } catch (...) {
+                              qWarning() << "处理变量" << tagName << "时发生异常";
+                          }
+
+                          // 确保资源释放
+                          UA_DataValue_delete(valueCopy);
+                      });
+}
+
+
+
+// ==========================工业现场优化版本 动态配置======================
+
+/*
+void OPCUAVariableManager::dataChangeNotificationCallback(
+    UA_Client* client, UA_UInt32 subId, void* subContext,
+    UA_UInt32 monId, void* monContext, UA_DataValue* value)
+{
+    // 1. 性能监控
+    static std::atomic<int> totalCount{0};
+    static QElapsedTimer statTimer;
+    if (totalCount++ == 0) statTimer.start();
+
+    if (statTimer.elapsed() >= 5000) {
+        qDebug() << "=== OPC UA 统计 ===";
+        qDebug() << "5秒内回调次数:" << totalCount.load();
+        qDebug() << "平均频率:" << (totalCount.load() / 5.0) << "Hz";
+        qDebug() << "线程池活跃线程:" << QThreadPool::globalInstance()->activeThreadCount();
+        qDebug() << "线程池最大线程:" << QThreadPool::globalInstance()->maxThreadCount();
+        totalCount = 0;
+        statTimer.restart();
+    }
+
+    // 2. 快速参数检查（工业现场要求快速响应）
+    if (!value || value->status != UA_STATUSCODE_GOOD) {
+        return;  // 静默失败，不记录日志避免影响性能
+    }
+
+    OPCUAVariableManager* manager = static_cast<OPCUAVariableManager*>(subContext);
+    OPCUAVariableHandle* handle = static_cast<OPCUAVariableHandle*>(monContext);
+    if (!manager || !handle) return;
+
+    // 3. 数据拷贝（必须深拷贝，因为回调在OPC UA线程）
+    UA_DataValue* valueCopy = UA_DataValue_new();
+    UA_DataValue_init(valueCopy);
+    UA_DataValue_copy(value, valueCopy);
+
+    // 4. 优化线程池配置
+    static std::once_flag poolInitFlag;
+    std::call_once(poolInitFlag, []() {
+        // 工业现场推荐配置
+        QThreadPool* pool = QThreadPool::globalInstance();
+        int coreCount = QThread::idealThreadCount();
+
+        // 根据工业场景调整
+        if (coreCount >= 4) {
+            // 多核系统：保留2个核心给系统和其他任务
+            pool->setMaxThreadCount(qMax(2, coreCount - 2));
+        } else {
+            // 少核系统：使用一半核心
+            pool->setMaxThreadCount(qMax(1, coreCount / 2));
+        }
+
+        pool->setExpiryTimeout(30000);  // 30秒空闲后回收线程
+        pool->setStackSize(128 * 1024); // 128KB栈，适合工业数据处理
+    });
+
+    // 5. 按变量分组处理（保证同一变量顺序）
+    QString tagName = QString(handle->tagName);
+    uint groupId = qHash(tagName) % QThreadPool::globalInstance()->maxThreadCount();
+
+    // 6. 提交到线程池
+    QtConcurrent::run(QThreadPool::globalInstance(),
+                      [manager, handle, valueCopy, groupId, tagName]() {
+                          Q_UNUSED(groupId);  // 分组用于负载均衡
+
+                          // 记录处理线程（调试用）
+                          // qDebug() << "处理变量" << tagName << "在线程" << QThread::currentThreadId();
+
+                          // 关键：异常安全的数据处理
+                          try {
+                              if (manager && handle && valueCopy) {
+                                  manager->updateVariableFromCallback(handle, valueCopy);
+                              }
+                          } catch (...) {
+                              qWarning() << "处理变量" << tagName << "时发生异常";
+                          }
+
+                          // 确保资源释放
+                          UA_DataValue_delete(valueCopy);
+                      });
+}
+*/
+
+
 //最初版在主线程中运行，可以保留
 
 /*
@@ -2576,9 +2739,6 @@ void OPCUAVariableManager::dataChangeNotificationCallback(
 
 */
 
-
-
-
 //------------------------------在工作线程中解析--------------------------------
 
 /*
@@ -2638,11 +2798,92 @@ void OPCUAVariableManager::dataChangeNotificationCallback(
         qDebug() << "状态不佳或不处理";
     }
 }
-
 */
 
+//------------------------------版本跟跌--------------------------------
+
+/*
+void OPCUAVariableManager::dataChangeNotificationCallback(    UA_Client* client, UA_UInt32 subId, void* subContext,
+                                                          UA_UInt32 monId, void* monContext, UA_DataValue* value)
+{
+    // 使用原子操作避免竞争
+    static std::atomic<int> totalCount{0};
+    static QElapsedTimer statTimer;
+
+    // 线程安全的统计开始
+    int currentCount = totalCount.fetch_add(1, std::memory_order_relaxed);
+    if (currentCount == 0) {
+        statTimer.start();
+    }
+
+    // 检查时间
+    if (statTimer.elapsed() >= 5000) {
+        int count = totalCount.load(std::memory_order_relaxed);
+        QThreadPool* pool = QThreadPool::globalInstance();
+
+        // 使用可用的方法
+        int activeThreads = pool->activeThreadCount();
+        int maxThreads = pool->maxThreadCount();
+
+        qDebug() << "=== OPC UA 统计 ===";
+        qDebug() << "5秒内回调次数:" << count;
+        qDebug() << "平均频率:" << (count / 5.0) << "Hz";
+        qDebug() << "线程池活跃线程:" << activeThreads;
+        qDebug() << "线程池最大线程:" << maxThreads;
+
+        // 调试信息
+        if (activeThreads == 0 && count > 100) {
+            qDebug() << "注意: 高频率回调但活跃线程显示为0，可能是:";
+            qDebug() << "  1. 任务执行太快，线程立即结束";
+            qDebug() << "  2. 统计时机正好在任务间隙";
+            qDebug() << "  3. Qt线程池的工作方式特性";
+        }
+
+        totalCount = 0;
+        statTimer.restart();
+    }
+
+    OPCUAVariableManager* manager = static_cast<OPCUAVariableManager*>(subContext);
+    if (!manager) {
+        qDebug() << "错误: manager为空";
+        return;
+    }
+
+    OPCUAVariableHandle* handle = static_cast<OPCUAVariableHandle*>(monContext);
+    if (!handle) {
+        qDebug() << "错误: handle为空";
+        return;
+    }
+
+    // qDebug() << "变量名称:" << handle->tagName;
+    // qDebug() << "数据状态:" << (value ? UA_StatusCode_name(value->status) : "NULL");
+
+    // 关键修复：复制 DataValue 而不是传递指针
+    if (value && value->status == UA_STATUSCODE_GOOD) {
+        // 创建数据的深拷贝
+        UA_DataValue* valueCopy = UA_DataValue_new();
+        UA_DataValue_init(valueCopy);
+        UA_DataValue_copy(value, valueCopy);
+
+        // qDebug() << "复制DataValue完成，新指针:" << valueCopy;
+        qDebug()<<"dataChangeNotificationCallback函数线程号"<<QThread::currentThreadId();
+        // 直接在工作线程中执行，移除QMetaObject::invokeMethod
+        QtConcurrent::run([manager, handle, valueCopy]() {
+            if (manager && handle && valueCopy) {
+                manager->updateVariableFromCallback(handle, valueCopy); }
+            // 清理复制的数据
+            UA_DataValue_delete(valueCopy);
+        });
+
+    } else {
+        qDebug() << "状态不佳或不处理";
+    }
+}
+*/
 
 //======================================可以多核==========================================
+
+/*
 void OPCUAVariableManager::dataChangeNotificationCallback(    UA_Client* client, UA_UInt32 subId, void* subContext,
                                                           UA_UInt32 monId, void* monContext, UA_DataValue* value)
 {
@@ -2708,6 +2949,8 @@ void OPCUAVariableManager::dataChangeNotificationCallback(    UA_Client* client,
                       });
 }
 
+*/
+
 
 
 void OPCUAVariableManager::updateVariableFromCallback(OPCUAVariableHandle* handle,
@@ -2716,7 +2959,7 @@ void OPCUAVariableManager::updateVariableFromCallback(OPCUAVariableHandle* handl
    // qDebug() << "\n=== 处理回调数据 (使用复制数据) ===";
    // qDebug() << "变量:" << (handle ? handle->tagName : "NULL");
    // qDebug() << "DataValue指针:" << value;
-    qDebug()<<"updateVariableFromCallback函数线程号"<<QThread::currentThreadId();
+    //qDebug()<<"updateVariableFromCallback函数线程号"<<QThread::currentThreadId();
     if (!handle || !value || !handle->variableDef) {
         qDebug() << "错误: 参数无效";
         return;
@@ -3229,12 +3472,10 @@ bool OPCUAVariableManager::createSubscription()//创建阅订
     UA_CreateSubscriptionRequest request;
     UA_CreateSubscriptionRequest_init(&request);
 
-
-    request.requestedPublishingInterval = m_subscriptionConfig.publishingInterval;// 发布间隔（毫秒）
-    request.requestedLifetimeCount = m_subscriptionConfig.lifetimeCount;// 生命周期计数
-    request.requestedMaxKeepAliveCount = m_subscriptionConfig.maxKeepAliveCount; // 最大保活计数
-
-    request.maxNotificationsPerPublish = 1000; // 无限制
+    request.requestedPublishingInterval = m_subscriptionConfig.publishingInterval;
+    request.requestedLifetimeCount = m_subscriptionConfig.lifetimeCount;// 生命周期计数60
+    request.requestedMaxKeepAliveCount = m_subscriptionConfig.maxKeepAliveCount; // 最大保活计数10
+    request.maxNotificationsPerPublish = 100; // 无限制
     request.publishingEnabled = true; // 启用发布
     request.priority = m_subscriptionConfig.priority;// 订阅优先级
      //  创建订阅
@@ -3335,9 +3576,10 @@ bool OPCUAVariableManager::createMonitoredItem(OPCUAVariableHandle *handle)
     monRequest.monitoringMode = UA_MONITORINGMODE_REPORTING;
 
     // 使用配置（这是你的优点）
-    monRequest.requestedParameters.samplingInterval = m_monitoredItemConfig.samplingInterval;
-    monRequest.requestedParameters.discardOldest = m_monitoredItemConfig.discardOldest;
-    monRequest.requestedParameters.queueSize = m_monitoredItemConfig.queueSize;
+    monRequest.requestedParameters.samplingInterval = m_monitoredItemConfig.samplingInterval;//1000
+    monRequest.requestedParameters.discardOldest = m_monitoredItemConfig.discardOldest;//true
+    monRequest.requestedParameters.queueSize = m_monitoredItemConfig.queueSize;//1
+
 
     // 可选：添加clientHandle
     if (m_monitoredItemConfig.clientHandle != 0) {
@@ -3590,6 +3832,7 @@ UA_Variant OPCUAVariableManager::qVariantToUAVariant(const QVariant &qtVariant,
 
 
 //以前的调试版，如果简化版有哦问题，可以退回调试版
+
 /*
 QVariant OPCUAVariableManager::uaVariantToQVariant(const UA_Variant &variant) const
 {

@@ -45,11 +45,12 @@ static constexpr auto qt_meta_stringdata_CLASSMainWindowENDCLASS = QtMocHelpers:
     "value",
     "valuedate1",
     "valuedate2",
-    "on_pushButton_clicked"
+    "on_pushButton_clicked",
+    "desp"
 );
 #else  // !QT_MOC_HAS_STRING_DATA
 struct qt_meta_stringdata_CLASSMainWindowENDCLASS_t {
-    uint offsetsAndSizes[16];
+    uint offsetsAndSizes[18];
     char stringdata0[11];
     char stringdata1[21];
     char stringdata2[1];
@@ -58,6 +59,7 @@ struct qt_meta_stringdata_CLASSMainWindowENDCLASS_t {
     char stringdata5[11];
     char stringdata6[11];
     char stringdata7[22];
+    char stringdata8[5];
 };
 #define QT_MOC_LITERAL(ofs, len) \
     uint(sizeof(qt_meta_stringdata_CLASSMainWindowENDCLASS_t::offsetsAndSizes) + ofs), len 
@@ -70,7 +72,8 @@ Q_CONSTINIT static const qt_meta_stringdata_CLASSMainWindowENDCLASS_t qt_meta_st
         QT_MOC_LITERAL(43, 5),  // "value"
         QT_MOC_LITERAL(49, 10),  // "valuedate1"
         QT_MOC_LITERAL(60, 10),  // "valuedate2"
-        QT_MOC_LITERAL(71, 21)   // "on_pushButton_clicked"
+        QT_MOC_LITERAL(71, 21),  // "on_pushButton_clicked"
+        QT_MOC_LITERAL(93, 4)   // "desp"
     },
     "MainWindow",
     "initializeOPCManager",
@@ -79,7 +82,8 @@ Q_CONSTINIT static const qt_meta_stringdata_CLASSMainWindowENDCLASS_t qt_meta_st
     "value",
     "valuedate1",
     "valuedate2",
-    "on_pushButton_clicked"
+    "on_pushButton_clicked",
+    "desp"
 };
 #undef QT_MOC_LITERAL
 #endif // !QT_MOC_HAS_STRING_DATA
@@ -91,7 +95,7 @@ Q_CONSTINIT static const uint qt_meta_data_CLASSMainWindowENDCLASS[] = {
       11,       // revision
        0,       // classname
        0,    0, // classinfo
-       5,   14, // methods
+       6,   14, // methods
        0,    0, // properties
        0,    0, // enums/sets
        0,    0, // constructors
@@ -99,17 +103,19 @@ Q_CONSTINIT static const uint qt_meta_data_CLASSMainWindowENDCLASS[] = {
        0,       // signalCount
 
  // slots: name, argc, parameters, tag, flags, initial metatype offsets
-       1,    0,   44,    2, 0x0a,    1 /* Public */,
-       3,    1,   45,    2, 0x0a,    2 /* Public */,
-       5,    1,   48,    2, 0x0a,    4 /* Public */,
-       6,    1,   51,    2, 0x0a,    6 /* Public */,
-       7,    0,   54,    2, 0x08,    8 /* Private */,
+       1,    0,   50,    2, 0x0a,    1 /* Public */,
+       3,    1,   51,    2, 0x0a,    2 /* Public */,
+       5,    1,   54,    2, 0x0a,    4 /* Public */,
+       6,    1,   57,    2, 0x0a,    6 /* Public */,
+       7,    0,   60,    2, 0x08,    8 /* Private */,
+       8,    0,   61,    2, 0x08,    9 /* Private */,
 
  // slots: parameters
     QMetaType::Void,
     QMetaType::Void, QMetaType::QVariant,    4,
     QMetaType::Void, QMetaType::QVariant,    4,
     QMetaType::Void, QMetaType::QVariant,    4,
+    QMetaType::Void,
     QMetaType::Void,
 
        0        // eod
@@ -136,6 +142,8 @@ Q_CONSTINIT const QMetaObject MainWindow::staticMetaObject = { {
         QtPrivate::TypeAndForceComplete<void, std::false_type>,
         QtPrivate::TypeAndForceComplete<QVariant, std::false_type>,
         // method 'on_pushButton_clicked'
+        QtPrivate::TypeAndForceComplete<void, std::false_type>,
+        // method 'desp'
         QtPrivate::TypeAndForceComplete<void, std::false_type>
     >,
     nullptr
@@ -152,6 +160,7 @@ void MainWindow::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id, 
         case 2: _t->valuedate1((*reinterpret_cast< std::add_pointer_t<QVariant>>(_a[1]))); break;
         case 3: _t->valuedate2((*reinterpret_cast< std::add_pointer_t<QVariant>>(_a[1]))); break;
         case 4: _t->on_pushButton_clicked(); break;
+        case 5: _t->desp(); break;
         default: ;
         }
     }
@@ -176,13 +185,13 @@ int MainWindow::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     if (_id < 0)
         return _id;
     if (_c == QMetaObject::InvokeMetaMethod) {
-        if (_id < 5)
+        if (_id < 6)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 5;
+        _id -= 6;
     } else if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
-        if (_id < 5)
+        if (_id < 6)
             *reinterpret_cast<QMetaType *>(_a[0]) = QMetaType();
-        _id -= 5;
+        _id -= 6;
     }
     return _id;
 }
